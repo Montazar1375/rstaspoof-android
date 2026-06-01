@@ -31,7 +31,7 @@ https://t.me/rstasnispoof
 
 ```bash
 pkg install golang git
-git clone https://github.com/rstaspoof/rstaspoof.git
+git clone https://github.com/rstagit/rstaspoof.git
 cd rstaspoof
 go run rstaspoof.go -tddd
 ```
