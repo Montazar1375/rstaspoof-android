@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 2
-        versionName = "2.0.0"
+        versionName = "0.2.1"
         multiDexEnabled = true
         buildConfigField("String", "DISTRIBUTION", "\"\"")
         buildConfigField("String", "FLAVOR", "\"\"")
