@@ -1,0 +1,10 @@
+*.iml
+.gradle/
+build/
+# local.properties is machine-specific; copy from local.properties.example
+local.properties
+.idea/caches/
+.idea/libraries/
+.DS_Store
+app/src/main/assets/rstaspoof
+app/src/main/jniLibs/**/librstaspoof.so
