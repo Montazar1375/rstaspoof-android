@@ -8,3 +8,7 @@ local.properties
 .DS_Store
 app/src/main/assets/rstaspoof
 app/src/main/jniLibs/**/librstaspoof.so
+# libv2ray.aar is large; download via scripts/build-libv2ray.sh
+# app/libs/libv2ray.aar
+app/src/main/jniLibs/**/libhev-socks5-tunnel.so
+_v2rayNG_src/

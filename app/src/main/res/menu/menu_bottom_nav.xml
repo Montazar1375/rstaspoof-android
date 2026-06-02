@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_servers"
+        android:icon="@drawable/ic_subscriptions_24dp"
+        android:title="@string/tab_servers" />
+    <item
+        android:id="@+id/nav_bypass"
+        android:icon="@drawable/ic_lock_24dp"
+        android:title="@string/tab_bypass" />
+    <item
+        android:id="@+id/nav_logs"
+        android:icon="@drawable/ic_logcat_24dp"
+        android:title="@string/tab_logs" />
+</menu>
