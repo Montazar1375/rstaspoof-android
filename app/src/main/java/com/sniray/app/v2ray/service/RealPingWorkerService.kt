@@ -5,6 +5,7 @@ import com.sniray.app.rsta.RstaBypassConfigInjector
 import com.sniray.app.rsta.RstaVpnBootstrap
 import com.sniray.app.v2ray.core.CoreConfigManager
 import com.sniray.app.v2ray.core.CoreNativeManager
+import com.sniray.app.v2ray.core.CoreServiceManager
 import com.sniray.app.v2ray.dto.RealPingEvent
 import com.sniray.app.v2ray.handler.SettingsManager
 import kotlinx.coroutines.CancellationException
@@ -42,6 +43,7 @@ class RealPingWorkerService(
             RstaBypassConfigInjector.setBypassEnabled(true)
             val bootstrap = runBlocking { RstaVpnBootstrap.ensureBypassRunning(context) }
             if (bootstrap.isFailure) {
+                stopBypassAfterSpeedtest()
                 RstaBypassConfigInjector.setBypassEnabled(wasEnabled)
                 onEvent(RealPingEvent.Finish("-1"))
                 close()
@@ -77,6 +79,7 @@ class RealPingWorkerService(
                 onEvent(RealPingEvent.Finish("-1"))
             } finally {
                 if (useSniChain) {
+                    stopBypassAfterSpeedtest()
                     RstaBypassConfigInjector.setBypassEnabled(bypassWasEnabled)
                 }
                 close()
@@ -94,6 +97,12 @@ class RealPingWorkerService(
         } catch (_: Throwable) {
             // ignore
         }
+    }
+
+    /** Stop rstaspoof started for batch speedtest; keep it running if the VPN session needs it. */
+    private fun stopBypassAfterSpeedtest() {
+        if (CoreServiceManager.isRunning()) return
+        RstaVpnBootstrap.stopBypass(context)
     }
 
     private fun startRealPing(guid: String): Long {

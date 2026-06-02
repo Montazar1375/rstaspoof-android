@@ -83,8 +83,8 @@ object RstaVpnBootstrap {
         )
     }
 
+    /** Stops the rstaspoof process if it is running (always runs; chain may already be toggled off). */
     fun stopBypass(context: Context) {
-        if (!RstaBypassConfigInjector.isBypassEnabled()) return
         context.startService(
             Intent(context, ProxyForegroundService::class.java).apply {
                 action = ProxyForegroundService.ACTION_STOP

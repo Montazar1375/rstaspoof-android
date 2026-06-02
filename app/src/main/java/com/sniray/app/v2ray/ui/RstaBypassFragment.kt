@@ -3,10 +3,10 @@ package com.sniray.app.v2ray.ui
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.result.contract.ActivityResultContracts
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -49,8 +49,10 @@ class RstaBypassFragment : BaseFragment<FragmentRstaBypassBinding>() {
         addCustomDividerToRecyclerView(binding.recyclerView, R.drawable.custom_divider)
         binding.recyclerView.adapter = adapter
 
-        binding.switchBypassChain.setOnCheckedChangeListener { _, checked ->
-            viewModel.setBypassChainEnabled(checked)
+        // @id/switch_bypass_chain — restart VPN via MainActivity when toggled while connected
+        binding.switchBypassChain.setChecked(viewModel.bypassChainEnabled.value)
+        binding.switchBypassChain.setOnCheckedChangeListener { _, isChecked ->
+            onSwitchBypassChainChanged(isChecked)
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -70,9 +72,9 @@ class RstaBypassFragment : BaseFragment<FragmentRstaBypassBinding>() {
                 launch {
                     viewModel.bypassChainEnabled.collect { enabled ->
                         binding.switchBypassChain.setOnCheckedChangeListener(null)
-                        binding.switchBypassChain.isChecked = enabled
-                        binding.switchBypassChain.setOnCheckedChangeListener { _, checked ->
-                            viewModel.setBypassChainEnabled(checked)
+                        binding.switchBypassChain.setChecked(enabled)
+                        binding.switchBypassChain.setOnCheckedChangeListener { _, isChecked ->
+                            onSwitchBypassChainChanged(isChecked)
                         }
                     }
                 }
@@ -86,6 +88,12 @@ class RstaBypassFragment : BaseFragment<FragmentRstaBypassBinding>() {
                 }
             }
         }
+    }
+
+    private fun onSwitchBypassChainChanged(enabled: Boolean) {
+        val main = requireActivity()
+        if (main !is MainActivity) return
+        main.onBypassChainSwitchChanged(enabled)
     }
 
     private fun refreshList() {

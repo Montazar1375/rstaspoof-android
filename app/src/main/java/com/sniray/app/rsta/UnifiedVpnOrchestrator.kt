@@ -5,8 +5,10 @@ import android.content.Intent
 import android.net.VpnService
 import com.sniray.app.data.AppDatabase
 import com.sniray.app.data.ProxyConfigEntity
+import com.sniray.app.service.ProxyForegroundService
 import com.sniray.app.v2ray.core.CoreServiceManager
 import com.sniray.app.v2ray.handler.MmkvManager
+import com.sniray.app.v2ray.handler.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -56,6 +58,28 @@ object UnifiedVpnOrchestrator {
     }
 
     fun isVpnRunning(): Boolean = CoreServiceManager.isRunning()
+
+    /**
+     * Restarts the active VPN session (same path as notification Restart).
+     */
+    fun restartWithCurrentSession(context: Context): Result<Unit> {
+        if (!SettingsManager.isVpnMode()) {
+            return Result.success(Unit)
+        }
+        if (!CoreServiceManager.isVpnSessionActive()) {
+            return Result.success(Unit)
+        }
+        if (RstaBypassConfigInjector.isBypassEnabled() && RstaBypassHolder.loadBypassConfig(context) == null) {
+            return Result.failure(
+                IllegalStateException("Select an SNI bypass profile on the Bypass tab"),
+            )
+        }
+        return if (CoreServiceManager.requestVpnRestart(context)) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalStateException("VPN is not connected"))
+        }
+    }
 
     suspend fun loadBypassConfig(context: Context, configId: Long): ProxyConfigEntity? {
         return AppDatabase.get(context).proxyConfigDao().getById(configId)

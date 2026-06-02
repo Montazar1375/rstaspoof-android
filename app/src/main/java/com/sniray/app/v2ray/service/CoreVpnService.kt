@@ -24,7 +24,10 @@ import com.sniray.app.v2ray.core.CoreServiceManager
 import com.sniray.app.v2ray.handler.MmkvManager
 import com.sniray.app.v2ray.handler.NotificationManager
 import com.sniray.app.v2ray.handler.SettingsManager
+import com.sniray.app.v2ray.AngApplication
 import com.sniray.app.v2ray.util.LogUtil
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.sniray.app.v2ray.util.MyContextWrapper
 import com.sniray.app.v2ray.util.Utils
 import java.lang.ref.SoftReference
@@ -330,7 +333,21 @@ class CoreVpnService : VpnService(), ServiceControl {
      * Runs the tun2socks process.
      * Starts the tun2socks process with the appropriate parameters.
      */
+    /**
+     * Called when the underlying network changes while VPN + SNI bypass are active.
+     */
+    fun reloadForNetworkChange() {
+        if (!isRunning || !::mInterface.isInitialized) return
+        LogUtil.i(AppConfig.TAG, "StartCore-VPN: Reloading tunnel after network change")
+        tun2SocksService?.stopTun2Socks()
+        tun2SocksService?.startTun2Socks()
+        AngApplication.appScope.launch(Dispatchers.IO) {
+            CoreServiceManager.restartXrayLoopOnly(mInterface)
+        }
+    }
+
     private fun runTun2socks() {
+        tun2SocksService?.stopTun2Socks()
         if (SettingsManager.isUsingHevTun()) {
             tun2SocksService = TProxyService(
                 context = applicationContext,

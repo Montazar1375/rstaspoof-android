@@ -67,10 +67,12 @@ class RstaLogsFragment : BaseFragment<FragmentRstaLogsBinding>() {
 
     private fun scrollToEnd() {
         val count = adapter.itemCount
-        if (count > 0) {
-            binding.recyclerView.post {
-                binding.recyclerView.scrollToPosition(count - 1)
-            }
+        if (count <= 0) return
+        val recyclerView = binding.recyclerView
+        val target = count - 1
+        recyclerView.post {
+            if (!isAdded || view == null || !recyclerView.isAttachedToWindow) return@post
+            recyclerView.scrollToPosition(target)
         }
     }
 }

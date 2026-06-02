@@ -10,6 +10,7 @@ import android.os.Looper
 
 class NetworkChangeMonitor(
     context: Context,
+    private val useUnderlyingNetwork: Boolean = false,
     private val onNetworkChanged: () -> Unit,
 ) {
     private val appContext = context.applicationContext
@@ -50,6 +51,11 @@ class NetworkChangeMonitor(
     private fun scheduleRestart() {
         val fingerprint = networkFingerprint()
         if (fingerprint == lastFingerprint) return
+        // Ignore brief offline gap while switching Wi‑Fi → mobile; recover when a link is back.
+        if (useUnderlyingNetwork && fingerprint == "none") {
+            lastFingerprint = fingerprint
+            return
+        }
         lastFingerprint = fingerprint
 
         pendingRestart?.let { handler.removeCallbacks(it) }
@@ -61,6 +67,9 @@ class NetworkChangeMonitor(
     }
 
     private fun networkFingerprint(): String {
+        if (useUnderlyingNetwork) {
+            return underlyingNetworkFingerprint()
+        }
         val active = connectivityManager.activeNetwork ?: return "none"
         val caps = connectivityManager.getNetworkCapabilities(active)
         val transports = buildList {
@@ -73,7 +82,23 @@ class NetworkChangeMonitor(
         return "${active.networkHandle}:${transports.joinToString("+").ifEmpty { "unknown" }}"
     }
 
+    /** Fingerprint of physical networks only (ignores the VPN tunnel). */
+    private fun underlyingNetworkFingerprint(): String {
+        val parts = connectivityManager.allNetworks.mapNotNull { network ->
+            val caps = connectivityManager.getNetworkCapabilities(network) ?: return@mapNotNull null
+            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return@mapNotNull null
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@mapNotNull null
+            val transports = buildList {
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) add("wifi")
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) add("cell")
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) add("eth")
+            }.sorted().joinToString("+")
+            "${network.networkHandle}:${transports.ifEmpty { "unknown" }}"
+        }.sorted()
+        return if (parts.isEmpty()) "none" else parts.joinToString("|")
+    }
+
     companion object {
-        private const val RESTART_DELAY_MS = 1000L
+        private const val RESTART_DELAY_MS = 1500L
     }
 }

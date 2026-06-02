@@ -28,8 +28,11 @@ import com.sniray.app.v2ray.service.DialerNativeService
 import com.sniray.app.v2ray.service.DialerWebviewService
 import com.sniray.app.v2ray.service.IDialerService
 import com.sniray.app.rsta.RstaVpnBootstrap
+import com.sniray.app.rsta.UnifiedVpnNetworkRecovery
+import com.sniray.app.service.ProxyForegroundService
 import com.sniray.app.v2ray.AngApplication
 import com.sniray.app.v2ray.util.LogUtil
+import kotlinx.coroutines.delay
 import com.sniray.app.v2ray.util.MessageUtil
 import com.sniray.app.v2ray.util.Utils
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +121,7 @@ object CoreServiceManager {
      * @param context The context from which the service is stopped.
      */
     fun stopVService(context: Context) {
+        UnifiedVpnNetworkRecovery.stopMonitoring()
         //context.toast(R.string.toast_services_stop)
         MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
         RstaVpnBootstrap.stopBypass(context.applicationContext)
@@ -128,6 +132,37 @@ object CoreServiceManager {
      * @return True if the service is running, false otherwise.
      */
     fun isRunning() = coreController.isRunning
+
+    /** VPN service is up (core running or foreground VPN/proxy service still bound). */
+    fun isVpnSessionActive(): Boolean = isRunning() || serviceControl?.get() != null
+
+    /**
+     * Full stop/start cycle so routing and SNI bypass match current settings (e.g. chain toggle).
+     * @return false if no active session to restart.
+     */
+    fun requestVpnRestart(context: Context): Boolean {
+        val control = serviceControl?.get() ?: run {
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: restart skipped — no active service")
+            return false
+        }
+        if (!SettingsManager.isVpnMode()) {
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: restart skipped — not in VPN mode")
+            return false
+        }
+        val service = control.getService()
+        LogUtil.i(AppConfig.TAG, "StartCore-Manager: requestVpnRestart")
+        RstaVpnBootstrap.stopBypass(service.applicationContext)
+        AngApplication.appScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main.immediate) {
+                control.stopService()
+            }
+            delay(500)
+            withContext(Dispatchers.Main.immediate) {
+                startVService(service)
+            }
+        }
+        return true
+    }
 
     /**
      * Gets the name of the currently running server.
@@ -288,6 +323,49 @@ object CoreServiceManager {
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
         NotificationManager.startSpeedNotification()
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
+        UnifiedVpnNetworkRecovery.startMonitoring(service)
+    }
+
+    /**
+     * Refreshes hev tun2socks and the Xray loop after the underlying network changes.
+     * Keeps the VPN interface up (no manual reconnect).
+     */
+    fun reloadTunnelAndCoreForNetworkChange() {
+        val vpnService = serviceControl?.get() as? CoreVpnService ?: return
+        vpnService.reloadForNetworkChange()
+    }
+
+    /**
+     * Restarts only the Xray core loop (receiver and notification stay registered).
+     */
+    suspend fun restartXrayLoopOnly(vpnInterface: ParcelFileDescriptor?) {
+        if (coreController.isRunning) {
+            try {
+                coreController.stopLoop()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: stopLoop for network change", e)
+            }
+            delay(400)
+        }
+        val service = getService() ?: return
+        val guid = MmkvManager.getSelectServer() ?: return
+        val config = MmkvManager.decodeServerConfig(guid) ?: return
+        val result = CoreConfigManager.getV2rayConfig(service, guid)
+        if (!result.status) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: config failed on network restart")
+            return
+        }
+        var tunFd = vpnInterface?.fd ?: 0
+        if (SettingsManager.isUsingHevTun()) {
+            tunFd = 0
+        }
+        CoreNativeManager.reconcileBrowserDialer("")
+        coreController.startLoop(result.content, tunFd)
+        if (coreController.isRunning) {
+            NotificationManager.showNotification(config)
+            NotificationManager.startSpeedNotification()
+            LogUtil.i(AppConfig.TAG, "StartCore-Manager: Xray loop restarted after network change")
+        }
     }
 
     /**
@@ -317,6 +395,7 @@ object CoreServiceManager {
 
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
         NotificationManager.cancelNotification()
+        UnifiedVpnNetworkRecovery.stopMonitoring()
 
         try {
             service.unregisterReceiver(mMsgReceive)
@@ -523,6 +602,7 @@ object CoreServiceManager {
 
                 AppConfig.MSG_STATE_RESTART -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Restart service")
+                    RstaVpnBootstrap.stopBypass(serviceControl.getService().applicationContext)
                     serviceControl.stopService()
                     Thread.sleep(500L)
                     startVService(serviceControl.getService())

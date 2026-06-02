@@ -17,14 +17,12 @@ import com.sniray.app.data.ProxyRepository
 import com.sniray.app.rsta.RstaBypassConfigInjector
 import com.sniray.app.rsta.RstaProxyServiceState
 import com.sniray.app.rsta.UnifiedVpnOrchestrator
-import com.sniray.app.service.NetworkChangeMonitor
 import com.sniray.app.service.ProxyForegroundService
 import com.sniray.app.R
 import com.sniray.app.service.ProxyRunState
 import com.sniray.app.v2ray.core.CoreServiceManager
 import com.sniray.app.v2ray.extension.toast
 import com.sniray.app.v2ray.handler.MmkvManager
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -59,10 +57,6 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
     private var collecting = false
     private var runningConfigId: Long? = null
 
-    private val networkMonitor = NetworkChangeMonitor(application) {
-        restartProxyAfterNetworkChange()
-    }
-
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val local = binder as ProxyForegroundService.LocalBinder
@@ -79,7 +73,6 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        networkMonitor.start()
         viewModelScope.launch {
             ProxyConfigSeeder.seedIfEmpty(getApplication())
             val activeId = RstaBypassConfigInjector.getActiveBypassConfigId()
@@ -94,13 +87,14 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setBypassChainEnabled(enabled: Boolean) {
+    /** Persists chain toggle and updates UI state (restart is handled by [MainActivity.onBypassChainSwitchChanged]). */
+    fun updateBypassChainEnabled(enabled: Boolean) {
         RstaBypassConfigInjector.setBypassEnabled(enabled)
         _bypassChainEnabled.value = enabled
-        val state = _runState.value
-        if (state is ProxyRunState.Running || state is ProxyRunState.Starting) {
-            getApplication<Application>().toast(R.string.bypass_chain_applies_next_connect)
-        }
+    }
+
+    fun onVpnRestartStarted() {
+        _runState.value = ProxyRunState.Starting
     }
 
     fun selectConfig(id: Long) {
@@ -180,19 +174,6 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun isVpnCoreRunning(): Boolean = CoreServiceManager.isRunning()
-
-    private fun restartProxyAfterNetworkChange() {
-        val configId = runningConfigId ?: return
-        val state = _runState.value
-        if (state !is ProxyRunState.Running && state !is ProxyRunState.Starting) return
-        viewModelScope.launch {
-            appendLogLine("[network] connectivity changed — restarting…")
-            stopProxy()
-            runningConfigId = configId
-            delay(300)
-            startUnifiedVpn()
-        }
-    }
 
     private fun appendLogLine(line: String) {
         RstaProxyServiceState.appendLog(line)
@@ -292,7 +273,6 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
-        networkMonitor.stop()
         unbindService()
         super.onCleared()
     }

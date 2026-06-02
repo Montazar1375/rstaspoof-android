@@ -39,6 +39,7 @@ import com.sniray.app.v2ray.util.Utils
 import com.sniray.app.rsta.RstaBypassConfigInjector
 import com.sniray.app.rsta.RstaBypassHolder
 import com.sniray.app.rsta.RstaProxyServiceState
+import com.sniray.app.rsta.RstaVpnBootstrap
 import com.sniray.app.service.ProxyRunState
 import com.sniray.app.vm.ProxyViewModel
 import com.sniray.app.v2ray.viewmodel.MainViewModel
@@ -291,6 +292,26 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         lifecycleScope.launch {
             delay(500)
             startV2Ray()
+        }
+    }
+
+    /** Called from [RstaBypassFragment] when @id/switch_bypass_chain changes. */
+    fun onBypassChainSwitchChanged(enabled: Boolean) {
+        proxyViewModel.updateBypassChainEnabled(enabled)
+        if (!enabled) {
+            RstaVpnBootstrap.stopBypass(applicationContext)
+        }
+        if (mainViewModel.isRunning.value != true) return
+        RstaProxyServiceState.appendLog(
+            "[chain] SNI bypass ${if (enabled) "enabled" else "disabled"} — restarting VPN…",
+        )
+        toast(R.string.bypass_chain_restarting_vpn)
+        proxyViewModel.onVpnRestartStarted()
+        restartV2Ray()
+        lifecycleScope.launch {
+            delay(1500)
+            proxyViewModel.syncFromVpnCoreState()
+            RstaProxyServiceState.appendLog("[chain] VPN restarted")
         }
     }
 

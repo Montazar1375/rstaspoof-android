@@ -31,7 +31,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.min
 
 object NotificationManager {
-    private const val NOTIFICATION_ID = 1
+    /** Shared by VPN core and SNI bypass foreground services (single shade entry). */
+    const val VPN_FOREGROUND_NOTIFICATION_ID = 1
+
+    private const val NOTIFICATION_ID = VPN_FOREGROUND_NOTIFICATION_ID
     private const val NOTIFICATION_PENDING_INTENT_CONTENT = 0
     private const val NOTIFICATION_PENDING_INTENT_STOP_V2RAY = 1
     private const val NOTIFICATION_PENDING_INTENT_RESTART_V2RAY = 2
@@ -62,47 +65,61 @@ object NotificationManager {
     }
 
     /**
-     * Shows the notification.
-     * @param currentConfig The current profile configuration.
+     * Builds the shared VPN / SNI foreground notification (same ID for both services).
+     *
+     * @param statusLine When set, shown as the title (e.g. while rstaspoof is starting).
      */
-    fun showNotification(currentConfig: ProfileItem?) {
-        val service = getService() ?: return
-
-        // Reset last query time to avoid querying stats too soon after showing the notification
-        lastQueryTime = System.currentTimeMillis()
-
+    fun buildSharedVpnForegroundNotification(
+        context: Context,
+        currentConfig: ProfileItem? = null,
+        statusLine: String? = null,
+    ): Notification {
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
-        val startMainIntent = Intent(service, MainActivity::class.java)
-        val contentPendingIntent = PendingIntent.getActivity(service, NOTIFICATION_PENDING_INTENT_CONTENT, startMainIntent, flags)
+        val startMainIntent = Intent(context, MainActivity::class.java)
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            NOTIFICATION_PENDING_INTENT_CONTENT,
+            startMainIntent,
+            flags,
+        )
 
-        val stopV2RayIntent = Intent(AppConfig.BROADCAST_ACTION_SERVICE)
-        stopV2RayIntent.`package` = AppConfig.ANG_PACKAGE
-        stopV2RayIntent.putExtra("key", AppConfig.MSG_STATE_STOP)
-        val stopV2RayPendingIntent = PendingIntent.getBroadcast(service, NOTIFICATION_PENDING_INTENT_STOP_V2RAY, stopV2RayIntent, flags)
+        val stopV2RayIntent = Intent(AppConfig.BROADCAST_ACTION_SERVICE).apply {
+            `package` = AppConfig.ANG_PACKAGE
+            putExtra("key", AppConfig.MSG_STATE_STOP)
+        }
+        val stopV2RayPendingIntent = PendingIntent.getBroadcast(
+            context,
+            NOTIFICATION_PENDING_INTENT_STOP_V2RAY,
+            stopV2RayIntent,
+            flags,
+        )
 
-        val restartV2RayIntent = Intent(AppConfig.BROADCAST_ACTION_SERVICE)
-        restartV2RayIntent.`package` = AppConfig.ANG_PACKAGE
-        restartV2RayIntent.putExtra("key", AppConfig.MSG_STATE_RESTART)
-        val restartV2RayPendingIntent = PendingIntent.getBroadcast(service, NOTIFICATION_PENDING_INTENT_RESTART_V2RAY, restartV2RayIntent, flags)
+        val restartV2RayIntent = Intent(AppConfig.BROADCAST_ACTION_SERVICE).apply {
+            `package` = AppConfig.ANG_PACKAGE
+            putExtra("key", AppConfig.MSG_STATE_RESTART)
+        }
+        val restartV2RayPendingIntent = PendingIntent.getBroadcast(
+            context,
+            NOTIFICATION_PENDING_INTENT_RESTART_V2RAY,
+            restartV2RayIntent,
+            flags,
+        )
 
-        val channelId =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                createNotificationChannel()
-            } else {
-                // If earlier version channel ID is not used
-                // https://developer.android.com/reference/android/support/v4/app/NotificationCompat.Builder.html#NotificationCompat.Builder(android.content.Context)
-                ""
-            }
+        val channelId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ensureNotificationChannel(context)
+        } else {
+            ""
+        }
 
-        var title = currentConfig?.remarks.orEmpty()
+        var title = statusLine ?: currentConfig?.remarks.orEmpty()
         var subtitle: String? = null
-        if (RstaBypassConfigInjector.isBypassEnabled()) {
+        if (statusLine == null && RstaBypassConfigInjector.isBypassEnabled()) {
             val bypass = runBlocking {
-                RstaBypassHolder.loadBypassConfig(service)
+                RstaBypassHolder.loadBypassConfig(context)
             }
             if (bypass != null) {
-                subtitle = service.getString(
+                subtitle = context.getString(
                     R.string.rsta_bypass_route_hint,
                     bypass.listenPort,
                     bypass.connectHost,
@@ -115,8 +132,11 @@ object NotificationManager {
                 }
             }
         }
+        if (title.isEmpty()) {
+            title = context.getString(R.string.app_name)
+        }
 
-        mBuilder = NotificationCompat.Builder(service, channelId)
+        val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_stat_name)
             .setContentTitle(title)
             .setSubText(subtitle)
@@ -127,18 +147,28 @@ object NotificationManager {
             .setContentIntent(contentPendingIntent)
             .addAction(
                 R.drawable.ic_delete_24dp,
-                service.getString(R.string.notification_action_stop_v2ray),
-                stopV2RayPendingIntent
+                context.getString(R.string.notification_action_stop_v2ray),
+                stopV2RayPendingIntent,
             )
             .addAction(
                 R.drawable.ic_delete_24dp,
-                service.getString(R.string.title_service_restart),
-                restartV2RayPendingIntent
+                context.getString(R.string.title_service_restart),
+                restartV2RayPendingIntent,
             )
 
-        //mBuilder?.setDefaults(NotificationCompat.FLAG_ONLY_ALERT_ONCE)
+        mBuilder = builder
+        return builder.build()
+    }
 
-        service.startForeground(NOTIFICATION_ID, mBuilder?.build())
+    /**
+     * Shows the notification on the VPN service.
+     * @param currentConfig The current profile configuration.
+     */
+    fun showNotification(currentConfig: ProfileItem?) {
+        val service = getService() ?: return
+        lastQueryTime = System.currentTimeMillis()
+        val notification = buildSharedVpnForegroundNotification(service, currentConfig)
+        service.startForeground(NOTIFICATION_ID, notification)
         ProxyForegroundService.detachNotificationForUnifiedVpn()
     }
 
@@ -171,18 +201,29 @@ object NotificationManager {
      * @return The channel ID.
      */
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun createNotificationChannel(): String {
+    private fun ensureNotificationChannel(context: Context): String {
         val channelId = AppConfig.RAY_NG_CHANNEL_ID
         val channelName = AppConfig.RAY_NG_CHANNEL_NAME
+        val sysNm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (sysNm.getNotificationChannel(channelId) != null) {
+            return channelId
+        }
         val chan = NotificationChannel(
             channelId,
-            channelName, NotificationManager.IMPORTANCE_HIGH
+            channelName,
+            android.app.NotificationManager.IMPORTANCE_HIGH,
         )
         chan.lightColor = Color.DKGRAY
-        chan.importance = NotificationManager.IMPORTANCE_NONE
+        chan.importance = android.app.NotificationManager.IMPORTANCE_NONE
         chan.lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-        getNotificationManager()?.createNotificationChannel(chan)
+        sysNm.createNotificationChannel(chan)
         return channelId
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun createNotificationChannel(): String {
+        val service = getService() ?: return AppConfig.RAY_NG_CHANNEL_ID
+        return ensureNotificationChannel(service)
     }
 
     /**

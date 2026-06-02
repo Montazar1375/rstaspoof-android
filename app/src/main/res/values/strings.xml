@@ -9,7 +9,7 @@
     <string name="bypass_chain_enabled">Chain SNI with VPN</string>
     <string name="bypass_chain_hint">When enabled, the VPN dials 127.0.0.1 and rstaspoof applies SNI spoofing before the real server.</string>
     <string name="bypass_selection_locked">Stop VPN to switch SNI profiles</string>
-    <string name="bypass_chain_applies_next_connect">SNI chain setting applies on next connect</string>
+    <string name="bypass_chain_restarting_vpn">Restarting VPN for SNI chain change…</string>
     <string name="title_rsta_bypass_edit">SNI profile</string>
     <string name="title_rsta_bypass_new">New SNI profile</string>
     <string name="rsta_bypass_field_name">Name</string>
@@ -35,9 +35,7 @@
     <string name="rsta_bypass_connect_format" translatable="false">→ %1$s:%2$d  SNI %3$s</string>
     <string name="rsta_bypass_method_format" translatable="false">Method: %1$s</string>
     <string name="rsta_bypass_route_hint">Server traffic: remote → 127.0.0.1:%1$d → %2$s:%3$d (SNI)</string>
-    <string name="notification_stop">Stop</string>
-    <string name="notification_channel_name">SNI-Ray proxy</string>
-    <string name="notification_channel_desc">SNI bypass and VPN service status</string>
+    <string name="notification_sni_starting">Starting SNI bypass…</string>
     <string name="app_widget_name">Switch</string>
     <string name="app_tile_name">Switch</string>
     <string name="app_tile_first_use">First use of this feature, please use the app to add server</string>

@@ -1,23 +1,17 @@
 package com.sniray.app.service
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.net.TrafficStats
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import androidx.core.app.NotificationCompat
 import com.sniray.app.rsta.LocalPortProbe
 import com.sniray.app.rsta.RstaProxyServiceState
-import com.sniray.app.v2ray.ui.MainActivity
 import com.sniray.app.R
+import com.sniray.app.v2ray.handler.NotificationManager as VpnNotificationManager
 import com.sniray.app.data.AppDatabase
 import com.sniray.app.data.ProxyConfigEntity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,11 +33,6 @@ class ProxyForegroundService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var childProcess: java.lang.Process? = null
     private var logThread: Thread? = null
-    private var trafficRunnable: Runnable? = null
-
-    private var txBaseline = 0L
-    private var rxBaseline = 0L
-    private val uid = android.os.Process.myUid()
 
     private val _runState = MutableStateFlow<ProxyRunState>(ProxyRunState.Idle)
     val runState: StateFlow<ProxyRunState> = _runState.asStateFlow()
@@ -58,7 +47,6 @@ class ProxyForegroundService : Service() {
 
     private val maxLogLines = 2000
     private val stopped = AtomicBoolean(false)
-    private var notificationDetached = false
 
     inner class LocalBinder : Binder() {
         fun getService(): ProxyForegroundService = this@ProxyForegroundService
@@ -101,19 +89,21 @@ class ProxyForegroundService : Service() {
         _logs.value = emptyList()
         RstaProxyServiceState.clearLogs()
 
-        notificationDetached = false
-        createNotificationChannel()
-        val notification = buildNotification(config, 0, 0, "Starting…")
+        val notification = VpnNotificationManager.buildSharedVpnForegroundNotification(
+            this,
+            statusLine = getString(R.string.notification_sni_starting),
+        )
+        val notificationId = VpnNotificationManager.VPN_FOREGROUND_NOTIFICATION_ID
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             } else {
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             }
-            startForeground(NOTIFICATION_ID, notification, fgsType)
+            startForeground(notificationId, notification, fgsType)
         } else {
             @Suppress("DEPRECATION")
-            startForeground(NOTIFICATION_ID, notification)
+            startForeground(notificationId, notification)
         }
 
         try {
@@ -136,8 +126,6 @@ class ProxyForegroundService : Service() {
                 .start()
 
             childProcess = proc
-            txBaseline = TrafficStats.getUidTxBytes(uid).takeIf { it >= 0 } ?: 0
-            rxBaseline = TrafficStats.getUidRxBytes(uid).takeIf { it >= 0 } ?: 0
 
             logThread = Thread {
                 readLogs(proc)
@@ -149,7 +137,6 @@ class ProxyForegroundService : Service() {
                     if (stopped.get()) return@post
                     if (ready && childProcess != null) {
                         publishRunState(ProxyRunState.Running(config))
-                        startTrafficUpdates(config)
                     } else {
                         val msg = _logs.value.lastOrNull()
                             ?: "Port ${config.listenPort} not listening (is librstaspoof.so built?)"
@@ -191,28 +178,6 @@ class ProxyForegroundService : Service() {
         }
     }
 
-    private fun startTrafficUpdates(config: ProxyConfigEntity) {
-        trafficRunnable = object : Runnable {
-            override fun run() {
-                if (stopped.get() || _runState.value !is ProxyRunState.Running) return
-                val tx = (TrafficStats.getUidTxBytes(uid).takeIf { it >= 0 } ?: 0) - txBaseline
-                val rx = (TrafficStats.getUidRxBytes(uid).takeIf { it >= 0 } ?: 0) - rxBaseline
-                val lastLog = _logs.value.lastOrNull()?.take(80) ?: ""
-                if (!notificationDetached) {
-                    val nm = getSystemService(NotificationManager::class.java)
-                    nm.notify(NOTIFICATION_ID, buildNotification(config, tx, rx, lastLog))
-                }
-                mainHandler.postDelayed(this, 2000)
-            }
-        }
-        mainHandler.post(trafficRunnable!!)
-    }
-
-    private fun stopTrafficUpdates() {
-        trafficRunnable?.let { mainHandler.removeCallbacks(it) }
-        trafficRunnable = null
-    }
-
     private fun appendLog(line: String) {
         val current = _logs.value
         val next = (current + line).let { list ->
@@ -245,7 +210,6 @@ class ProxyForegroundService : Service() {
 
     private fun stopProxyInternal() {
         stopped.set(true)
-        stopTrafficUpdates()
         logThread?.interrupt()
         logThread = null
         childProcess?.let { proc ->
@@ -265,62 +229,21 @@ class ProxyForegroundService : Service() {
         super.onDestroy()
     }
 
-    /** Hide the separate proxy notification when the VPN foreground notification is shown. */
+    /**
+     * Drops the proxy FGS notification once [com.sniray.app.v2ray.handler.NotificationManager]
+     * shows the VPN notification (only notification the user should see).
+     */
+    /**
+     * Leaves the shared VPN notification on screen when [VpnNotificationManager.showNotification]
+     * takes over on the VPN service (API 33+). Older APIs keep the same notification slot (ID 1).
+     */
     fun detachNotificationForVpn() {
-        notificationDetached = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             stopForeground(STOP_FOREGROUND_DETACH)
         } else {
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+            @Suppress("DEPRECATION")
+            stopForeground(false)
         }
-    }
-
-    private fun buildNotification(
-        config: ProxyConfigEntity,
-        tx: Long,
-        rx: Long,
-        subtitle: String,
-    ): Notification {
-        val openIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val stopIntent = PendingIntent.getService(
-            this, 1,
-            Intent(this, ProxyForegroundService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("${config.name} — Running")
-            .setContentText("↑ ${formatBytes(tx)}  ↓ ${formatBytes(rx)}")
-            .setSubText(subtitle)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(subtitle))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(openIntent)
-            .addAction(0, getString(R.string.notification_stop), stopIntent)
-            .build()
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = getString(R.string.notification_channel_desc)
-            }
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
-    }
-
-    private fun formatBytes(n: Long): String = when {
-        n < 1024 -> "${n}B"
-        n < 1024 * 1024 -> "${n / 1024}KB"
-        else -> String.format("%.1fMB", n / (1024.0 * 1024.0))
     }
 
     companion object {
@@ -331,8 +254,6 @@ class ProxyForegroundService : Service() {
             instance?.detachNotificationForVpn()
         }
 
-        const val CHANNEL_ID = "proxy_running"
-        const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.sniray.app.START"
         const val ACTION_STOP = "com.sniray.app.STOP"
         const val EXTRA_CONFIG_ID = "config_id"
