@@ -1637,6 +1637,16 @@ func intMapVal(m map[string]interface{}, key string, def int) int {
 	return def
 }
 
+// programArgs returns CLI flags for flag.Parse. When started via Android's linker64,
+// os.Args[1] is often the binary path, which would otherwise stop flag parsing and leave defaults.
+func programArgs() []string {
+	args := os.Args[1:]
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		args = args[1:]
+	}
+	return args
+}
+
 func main() {
 	fs := flag.NewFlagSet("rstaspoof", flag.ExitOnError)
 	fHelp := fs.Bool("help", false, "Show detailed help and exit")
@@ -1658,7 +1668,7 @@ func main() {
 	fInfo := fs.Bool("info", false, "Show platform capabilities and exit")
 	_ = fNoRaw
 
-	fs.Parse(os.Args[1:])
+	fs.Parse(programArgs())
 
 	if *fVersion {
 		fmt.Printf("RSTA SNI Spoof %s\n", Version)
@@ -1818,4 +1828,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
